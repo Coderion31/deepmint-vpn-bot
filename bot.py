@@ -3,6 +3,51 @@ import logging
 import os
 from pathlib import Path
 
+import socket
+
+# Фикс доступности api.telegram.org из сетей, где DNS отдаёт недоступный
+# адрес (или IPv6). Пинуем известные рабочие IPv4 Telegram и подменяем
+# getaddrinfo, чтобы requests подключался к живому IP с сохранением
+# SNI/проверки TLS по имени api.telegram.org.
+TELEGRAM_API_HOST = "api.telegram.org"
+TELEGRAM_API_IPS = ["149.154.167.220", "149.154.166.110", "149.154.167.200", "149.154.166.220"]
+
+
+def _pick_api_ip():
+    import socket as _s
+
+    for ip in TELEGRAM_API_IPS:
+        try:
+            with _s.create_connection((ip, 443), timeout=4):
+                return ip
+        except OSError:
+            continue
+    return TELEGRAM_API_IPS[0]
+
+
+_ORIG_GETADDRINFO = socket.getaddrinfo
+_PINNED_API_IP = _pick_api_ip()
+
+
+def _pinned_getaddrinfo(host, *args, **kwargs):
+    if isinstance(host, str) and host == TELEGRAM_API_HOST:
+        host = _PINNED_API_IP
+    return _ORIG_GETADDRINFO(host, *args, **kwargs)
+
+
+socket.getaddrinfo = _pinned_getaddrinfo
+
+
+def _refresh_api_ip():
+    """Перепин рабочего IP: вызывается при сбое соединения."""
+    global _PINNED_API_IP
+    new_ip = _pick_api_ip()
+    if new_ip != _PINNED_API_IP:
+        _PINNED_API_IP = new_ip
+        socket.getaddrinfo = _pinned_getaddrinfo  # подхватывает новое значение через замыкание
+        log.info("Telegram API IP refreshed: %s", new_ip)
+
+
 import requests
 
 TOKEN = os.environ.get("DEEPMINT_BOT_TOKEN", "").strip()
@@ -48,15 +93,22 @@ USERS = load_users()
 
 
 def call(method, **kwargs):
-    try:
-        r = requests.post(f"{API}/{method}", json=kwargs, timeout=30)
-        data = r.json()
-        if not data.get("ok"):
-            log.warning("API %s error: %s", method, data.get("description"))
-        return data.get("result")
-    except requests.RequestException as e:
-        log.error("API %s request failed: %s", method, e)
-        return None
+    last_err = None
+    for attempt in range(3):
+        try:
+            r = requests.post(f"{API}/{method}", json=kwargs, timeout=30)
+            data = r.json()
+            if not data.get("ok"):
+                log.warning("API %s error: %s", method, data.get("description"))
+            return data.get("result")
+        except requests.RequestException as e:
+            last_err = e
+            log.error("API %s request failed (attempt %d): %s", method, attempt + 1, e)
+            try:
+                _refresh_api_ip()
+            except Exception:
+                pass
+    return None
 
 
 def send_chat_action(chat_id, action="typing"):
