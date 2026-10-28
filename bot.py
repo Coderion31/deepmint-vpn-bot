@@ -199,18 +199,18 @@ def sub_keyboard():
 
 
 APP_LINK = "https://coderion31.github.io/deepmint-vpn-app/"
-SUPPORT_LINK = "https://t.me/deepmintvpn_support"
+SUPPORT_LINK = "https://t.me/deepminthelp"
 
 
 def menu_keyboard():
     return {
         "inline_keyboard": [
-            [{"text": "🎟 Купить подписку", "callback_data": "menu_buy"}],
-            [{"text": "🚀 Открыть приложение", "web_app": {"url": APP_LINK}}],
-            [{"text": "👛 Баланс", "callback_data": "menu_balance"}],
-            [{"text": "👥 Пригласить друзей", "callback_data": "menu_invite"}],
-            [{"text": "🛟 Поддержка", "url": SUPPORT_LINK}],
-            [{"text": "📄 Документы", "callback_data": "menu_docs"}],
+            [{"text": "Купить подписку", "callback_data": "menu_buy"}],
+            [{"text": "Открыть приложение", "web_app": {"url": APP_LINK}}],
+            [{"text": "Баланс", "callback_data": "menu_balance"}],
+            [{"text": "Пригласить друзей", "callback_data": "menu_invite"}],
+            [{"text": "Поддержка", "url": SUPPORT_LINK}],
+            [{"text": "Документы", "callback_data": "menu_docs"}],
         ]
     }
 
@@ -241,7 +241,7 @@ EXTRA_DEVICE_PRICE = "1.39 ₽/день за доп. устройство"
 def buy_keyboard():
     return {
         "inline_keyboard": [
-            [{"text": "🎁 Пробная — 48 часов (0 ₽)", "callback_data": "buy_trial"}],
+            [{"text": "Пробная — 48 часов (0 ₽)", "callback_data": "buy_trial"}],
             [{"text": "30 дней — 199 ₽", "callback_data": "buy_30"}],
             [{"text": "90 дней — 549 ₽", "callback_data": "buy_90"}],
             [{"text": "180 дней — 999 ₽", "callback_data": "buy_180"}],
@@ -257,7 +257,7 @@ def send_planinteractive(state, chat_id):
         state,
         chat_id,
         (
-            "🎟 Купить подписку\n\n"
+            "Купить подписку\n\n"
             "Пробная подписка — 48 часов, бесплатно\n\n"
             "30 дней — 199 ₽\n"
             "90 дней — 549 ₽\n"
@@ -274,7 +274,7 @@ def send_planinteractive(state, chat_id):
 def balance_keyboard():
     return {
         "inline_keyboard": [
-            [{"text": "💳 Пополнить баланс", "callback_data": "balance_topup"}],
+            [{"text": "Пополнить баланс", "callback_data": "balance_topup"}],
             [{"text": "← Назад", "callback_data": "menu_back"}],
         ]
     }
@@ -466,12 +466,12 @@ def handle_update(update):
                 state,
                 chat_id,
                 (
-                    "👥 Заработать с deepmint.vpn\n\n"
+                    "Заработать с deepmint.vpn\n\n"
                     "Приглашай друзей и получай 20% с их оплат.\n\n"
                     "Друзей приглашено: 0\n"
                     "Активировали пробный доступ: 0\n"
                     "Заработано с рефералов: 0₽\n\n"
-                    "🔗 Ваша реферальная ссылка:\n"
+                    "Ваша реферальная ссылка:\n"
                     f"https://t.me/deepmintvpn_bot?start={user_id}"
                 ),
                 reply_markup=invite_keyboard(),
