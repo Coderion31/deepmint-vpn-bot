@@ -1,0 +1,480 @@
+import json
+import logging
+import os
+from pathlib import Path
+
+import requests
+
+TOKEN = os.environ.get("DEEPMINT_BOT_TOKEN", "").strip()
+API = f"https://api.telegram.org/bot{TOKEN}"
+
+CHANNEL_USERNAME = "@deepmintvpn"
+CHANNEL_LINK = "https://t.me/deepmintvpn"
+CHANNELS = [CHANNEL_USERNAME]
+
+BASE_DIR = Path(__file__).resolve().parent
+USERS_FILE = BASE_DIR / "users.json"
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+log = logging.getLogger("deepmint-bot")
+
+SUB_YES = {"creator", "administrator", "member"}
+
+
+def load_users():
+    try:
+        if USERS_FILE.exists():
+            data = json.loads(USERS_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return {str(k): v for k, v in data.items()}
+            if isinstance(data, list):
+                # старый формат: список id тех, кто уже заходил
+                return {str(u): {"accepted": True, "welcome_sent": True} for u in data}
+    except (OSError, ValueError):
+        pass
+    return {}
+
+
+def save_users(users):
+    try:
+        USERS_FILE.write_text(
+            json.dumps(users, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    except OSError:
+        pass
+
+
+USERS = load_users()
+
+
+def call(method, **kwargs):
+    try:
+        r = requests.post(f"{API}/{method}", json=kwargs, timeout=30)
+        data = r.json()
+        if not data.get("ok"):
+            log.warning("API %s error: %s", method, data.get("description"))
+        return data.get("result")
+    except requests.RequestException as e:
+        log.error("API %s request failed: %s", method, e)
+        return None
+
+
+def send_chat_action(chat_id, action="typing"):
+    call("sendChatAction", chat_id=chat_id, action=action)
+
+
+def send_text(chat_id, text, **extra):
+    return call("sendMessage", chat_id=chat_id, text=text, **extra)
+
+
+def delete_message(chat_id, message_id):
+    if not message_id:
+        return True
+    return bool(call("deleteMessage", chat_id=chat_id, message_id=message_id))
+
+
+def send_step(state, chat_id, text, **extra):
+    """Удаляет все предыдущие сообщения бота и отправляет новое."""
+    for mid in list(state.get("msg_ids", [])):
+        delete_message(chat_id, mid)
+    state["msg_ids"] = []
+    result = send_text(chat_id, text, **extra)
+    if result:
+        state["msg_ids"] = [result.get("message_id")]
+    save_users(USERS)
+    return result
+
+
+def is_subscribed(user_id):
+    for chat in CHANNELS:
+        member = call("getChatMember", chat_id=chat, user_id=user_id)
+        if member is None:
+            # API недоступен или канал закрыт для бота: пропускаем проверку,
+            # чтобы не блокировать пользователя из-за технической ошибки.
+            return True
+        if member.get("status") not in SUB_YES:
+            return False
+    return True
+
+
+def user_state(user_id):
+    return USERS.setdefault(
+        str(user_id),
+        {"accepted": False, "welcome_sent": False, "msg_ids": []},
+    )
+
+
+DOC_LINKS = {
+    "doc_privacy": "https://telegra.ph/Politika-konfidencialnosti--deepmint-vpn-10-27",
+    "doc_terms": "https://telegra.ph/Polzovatelskoe-soglashenie--deepmint-vpn-10-27",
+    "doc_refund": "https://telegra.ph/Usloviya-vozvrata--deepmint-vpn-10-27",
+    "doc_bot_policy": "https://telegra.ph/Politika-bota--deepmint-vpn-10-27",
+}
+
+
+def terms_keyboard():
+    return {
+        "inline_keyboard": [
+            [
+                {
+                    "text": "Политика конфиденциальности",
+                    "url": DOC_LINKS["doc_privacy"],
+                }
+            ],
+            [{"text": "Условия использования", "url": DOC_LINKS["doc_terms"]}],
+            [{"text": "Условия возврата", "url": DOC_LINKS["doc_refund"]}],
+            [{"text": "Политика бота", "url": DOC_LINKS["doc_bot_policy"]}],
+            [{"text": "Я принимаю условия", "callback_data": "accept_terms"}],
+        ]
+    }
+
+
+def sub_keyboard():
+    return {
+        "inline_keyboard": [
+            [{"text": "Подписаться на канал", "url": CHANNEL_LINK}],
+            [{"text": "Я подписался", "callback_data": "check_sub"}],
+        ]
+    }
+
+
+APP_LINK = "https://coderion31.github.io/deepmint-vpn-app/"
+SUPPORT_LINK = "https://t.me/deepmintvpn_support"
+
+
+def menu_keyboard():
+    return {
+        "inline_keyboard": [
+            [{"text": "🎟 Купить подписку", "callback_data": "menu_buy"}],
+            [{"text": "🚀 Открыть приложение", "web_app": {"url": APP_LINK}}],
+            [{"text": "👛 Баланс", "callback_data": "menu_balance"}],
+            [{"text": "👥 Пригласить друзей", "callback_data": "menu_invite"}],
+            [{"text": "🛟 Поддержка", "url": SUPPORT_LINK}],
+            [{"text": "📄 Документы", "callback_data": "menu_docs"}],
+        ]
+    }
+
+
+def docs_keyboard():
+    return {
+        "inline_keyboard": [
+            [{"text": "Политика конфиденциальности", "url": DOC_LINKS["doc_privacy"]}],
+            [{"text": "Условия использования", "url": DOC_LINKS["doc_terms"]}],
+            [{"text": "Условия возврата", "url": DOC_LINKS["doc_refund"]}],
+            [{"text": "Политика бота", "url": DOC_LINKS["doc_bot_policy"]}],
+            [{"text": "← Назад", "callback_data": "menu_back"}],
+        ]
+    }
+
+
+PLANS = {
+    "trial": {"label": "Пробная — 48 часов", "price": "0 ₽"},
+    "30": {"label": "30 дней", "price": "199 ₽"},
+    "90": {"label": "90 дней", "price": "549 ₽"},
+    "180": {"label": "180 дней", "price": "999 ₽"},
+    "360": {"label": "360 дней", "price": "1799 ₽"},
+}
+
+EXTRA_DEVICE_PRICE = "1.39 ₽/день за доп. устройство"
+
+
+def buy_keyboard():
+    return {
+        "inline_keyboard": [
+            [{"text": "🎁 Пробная — 48 часов (0 ₽)", "callback_data": "buy_trial"}],
+            [{"text": "30 дней — 199 ₽", "callback_data": "buy_30"}],
+            [{"text": "90 дней — 549 ₽", "callback_data": "buy_90"}],
+            [{"text": "180 дней — 999 ₽", "callback_data": "buy_180"}],
+            [{"text": "360 дней — 1799 ₽", "callback_data": "buy_360"}],
+            [{"text": "← Назад в меню", "callback_data": "menu_back"}],
+        ]
+    }
+
+
+def send_planinteractive(state, chat_id):
+    send_chat_action(chat_id, "typing")
+    send_step(
+        state,
+        chat_id,
+        (
+            "🎟 Купить подписку\n\n"
+            "Пробная подписка — 48 часов, бесплатно\n\n"
+            "30 дней — 199 ₽\n"
+            "90 дней — 549 ₽\n"
+            "180 дней — 999 ₽\n"
+            "360 дней — 1799 ₽\n\n"
+            "Стандарт: 2 устройства на подписку.\n"
+            "Доп. устройство — 1.39 ₽ в день.\n\n"
+            "Безлимитный трафик и все локации включены."
+        ),
+        reply_markup=buy_keyboard(),
+    )
+
+
+def balance_keyboard():
+    return {
+        "inline_keyboard": [
+            [{"text": "💳 Пополнить баланс", "callback_data": "balance_topup"}],
+            [{"text": "← Назад", "callback_data": "menu_back"}],
+        ]
+    }
+
+
+def invite_keyboard():
+    return {
+        "inline_keyboard": [
+            [{"text": "← Назад в меню", "callback_data": "menu_back"}],
+        ]
+    }
+
+
+def send_menu(state, chat_id):
+    send_chat_action(chat_id, "typing")
+    send_step(
+        state,
+        chat_id,
+        (
+            "Главное меню deepmint vpn\n\n"
+            "Выберите раздел: открыть приложение, проверить баланс, "
+            "пригласить друзей или обратиться в поддержку."
+        ),
+        reply_markup=menu_keyboard(),
+    )
+
+
+def send_docs(state, chat_id):
+    send_chat_action(chat_id, "typing")
+    send_step(
+        state,
+        chat_id,
+        "Документы deepmint vpn\n\nВыберите документ:",
+        reply_markup=docs_keyboard(),
+    )
+
+
+def send_terms(state, chat_id, **extra):
+    send_step(
+        state,
+        chat_id,
+        (
+            "Добро пожаловать в deepmint vpn.\n\n"
+            "Прежде чем начать работу, ознакомьтесь с документами "
+            "и примите условия сервиса."
+        ),
+        reply_markup=terms_keyboard(),
+        **extra,
+    )
+
+
+def send_enter_text(state, chat_id):
+    send_chat_action(chat_id, "typing")
+    send_step(
+        state,
+        chat_id,
+        (
+            f"Добро пожаловать в deepmint vpn.\n\n"
+            "Для начала работы подпишитесь на наш канал "
+            f"{CHANNEL_LINK} — там новости, тарифы и обновления.\n\n"
+            "После подписки нажмите кнопку ниже."
+        ),
+        reply_markup=sub_keyboard(),
+    )
+
+
+def send_welcome(state, chat_id):
+    send_chat_action(chat_id, "typing")
+    send_step(
+        state,
+        chat_id,
+        (
+            "Добро пожаловать в deepmint vpn.\n\n"
+            "Быстрый и стабильный интернет: безлимитный трафик, "
+            "до 10 устройств и все локации сразу.\n\n"
+            "Дальше здесь появятся тарифы, оплата и настройка подключения."
+        ),
+    )
+
+
+def handle_start(chat_id, user_id):
+    state = user_state(user_id)
+    if state.get("accepted"):
+        send_menu(state, chat_id)
+        return
+
+    if is_subscribed(user_id):
+        send_enter_text(state, chat_id)
+    else:
+        send_enter_text(state, chat_id)
+
+
+def handle_accept(chat_id, user_id, message_id):
+    state = user_state(user_id)
+    state["accepted"] = True
+    save_users(USERS)
+    delete_message(chat_id, message_id)
+    send_step(state, chat_id, "Спасибо! Условия приняты. Добро пожаловать в deepmint vpn.")
+    send_menu(state, chat_id)
+
+
+def handle_check_sub(chat_id, user_id, message_id):
+    send_chat_action(chat_id)
+    state = user_state(user_id)
+    subscribed = is_subscribed(user_id)
+    if subscribed:
+        delete_message(chat_id, message_id)
+        for mid in list(state.get("msg_ids", [])):
+            delete_message(chat_id, mid)
+        state["msg_ids"] = []
+        save_users(USERS)
+        send_step(
+            state,
+            chat_id,
+            "Подписка оформлена. Спасибо! Добро пожаловать в deepmint vpn.",
+        )
+        send_terms(state, chat_id)
+    else:
+        delete_message(chat_id, message_id)
+        send_step(
+            state,
+            chat_id,
+            (
+                "Вы ещё не подписались на канал.\n\n"
+                f"Перейдите по ссылке {CHANNEL_LINK}, подпишитесь "
+                "и нажмите кнопку ещё раз."
+            ),
+            reply_markup=sub_keyboard(),
+        )
+
+
+def handle_help(chat_id):
+    send_chat_action(chat_id)
+    send_text(
+        chat_id,
+        (
+            "Помощь по deepmint.vpn\n\n"
+            "Команды:\n"
+            "/start — приветствие\n"
+            "/help — этот список\n\n"
+            "Документы:\n"
+            "• Политика конфиденциальности\n"
+            "• Условия использования\n"
+            "• Условия возврата\n"
+            "• Политика бота"
+        ),
+    )
+
+
+def handle_update(update):
+    message = update.get("message")
+    callback = update.get("callback_query")
+
+    if callback:
+        chat_id = callback["message"]["chat"]["id"]
+        message_id = callback["message"]["message_id"]
+        user_id = callback["from"]["id"]
+        data = callback.get("data")
+        call("answerCallbackQuery", callback_query_id=callback["id"])
+
+        if data == "accept_terms":
+            handle_accept(chat_id, user_id, message_id)
+        elif data == "check_sub":
+            handle_check_sub(chat_id, user_id, message_id)
+        elif data == "menu_buy":
+            state = user_state(user_id)
+            send_planinteractive(state, chat_id)
+        elif data == "menu_balance":
+            state = user_state(user_id)
+            send_step(
+                state,
+                chat_id,
+                "Баланс: 0 ₽\n\n"
+                "Пополнение появится после подключения тарифа в приложении.",
+                reply_markup=balance_keyboard(),
+            )
+        elif data == "balance_topup":
+            state = user_state(user_id)
+            send_step(
+                state,
+                chat_id,
+                "Пополнение баланса пока не работает.\n\n"
+                "Скоро здесь можно будет оплатить подписку картой или СБП.",
+                reply_markup=balance_keyboard(),
+            )
+        elif data == "menu_invite":
+            state = user_state(user_id)
+            send_step(
+                state,
+                chat_id,
+                (
+                    "👥 Заработать с deepmint.vpn\n\n"
+                    "Приглашай друзей и получай 20% с их оплат.\n\n"
+                    "Друзей приглашено: 0\n"
+                    "Активировали пробный доступ: 0\n"
+                    "Заработано с рефералов: 0₽\n\n"
+                    "🔗 Ваша реферальная ссылка:\n"
+                    f"https://t.me/deepmintvpn_bot?start={user_id}"
+                ),
+                reply_markup=invite_keyboard(),
+            )
+        elif data.startswith("buy_"):
+            state = user_state(user_id)
+            days = data.split("_")[1]
+            plan = PLANS.get(days, {"label": days + " дней", "price": ""})
+            send_step(
+                state,
+                chat_id,
+                (
+                    f"Вы выбрали тариф «{plan['label']}» — {plan['price']}.\n\n"
+                    "Оплата пока не подключена. Скоро здесь можно будет "
+                    "оплатить картой, через СБП или криптовалютой."
+                ),
+                reply_markup=buy_keyboard(),
+            )
+        elif data == "menu_docs":
+            state = user_state(user_id)
+            send_docs(state, chat_id)
+        elif data == "menu_back":
+            state = user_state(user_id)
+            send_menu(state, chat_id)
+        return
+
+    if not message:
+        return
+    chat_id = message["chat"]["id"]
+    user_id = message.get("from", {}).get("id")
+    text = (message.get("text") or "").strip()
+
+    if text == "/start":
+        handle_start(chat_id, user_id)
+    elif text == "/help":
+        handle_help(chat_id)
+
+
+def main():
+    if not TOKEN:
+        log.error("DEEPMINT_BOT_TOKEN is not set")
+        return
+    me = call("getMe")
+    if me:
+        log.info("bot started: %s (@%s)", me.get("first_name"), me.get("username"))
+        log.info("channel: %s", CHANNELS)
+
+    offset = None
+    while True:
+        params = {"timeout": 30}
+        if offset is not None:
+            params["offset"] = offset
+        updates = call("getUpdates", **params)
+        if not updates:
+            continue
+        for update in updates:
+            if update.get("update_id", 0) >= (offset or 0):
+                offset = update["update_id"] + 1
+            try:
+                handle_update(update)
+            except Exception:
+                log.exception("failed to handle update %s", update.get("update_id"))
+
+
+if __name__ == "__main__":
+    main()
