@@ -93,16 +93,24 @@ USERS = load_users()
 
 
 def call(method, **kwargs):
-    last_err = None
     for attempt in range(3):
         try:
-            r = requests.post(f"{API}/{method}", json=kwargs, timeout=30)
-            data = r.json()
-            if not data.get("ok"):
-                log.warning("API %s error: %s", method, data.get("description"))
-            return data.get("result")
+            # Отдельная сессия на каждый запрос: исключает "параллельные"
+            # long-polling от одного процесса (Telegram это режет конфликтом 409)
+            # из-за переиспользования соединения в пуле urllib3.
+            s = requests.Session()
+            try:
+                r = s.post(f"{API}/{method}", json=kwargs, timeout=30)
+                data = r.json()
+                if not data.get("ok"):
+                    log.warning("API %s error: %s", method, data.get("description"))
+                return data.get("result")
+            finally:
+                try:
+                    s.close()
+                except Exception:
+                    pass
         except requests.RequestException as e:
-            last_err = e
             log.error("API %s request failed (attempt %d): %s", method, attempt + 1, e)
             try:
                 _refresh_api_ip()
@@ -157,8 +165,8 @@ def user_state(user_id):
 
 
 DOC_LINKS = {
-    "doc_privacy": "https://telegra.ph/Politika-konfidencialnosti--deepmint-vpn-10-27",
-    "doc_terms": "https://telegra.ph/Polzovatelskoe-soglashenie--deepmint-vpn-10-27",
+    "doc_privacy": "https://telegra.ph/POLITIKA-KONFIDENCIALNOSTI-08-12-99",
+    "doc_terms": "https://telegra.ph/PUBLICHNAYA-OFERTA-08-12-15",
     "doc_refund": "https://telegra.ph/Usloviya-vozvrata--deepmint-vpn-10-27",
     "doc_bot_policy": "https://telegra.ph/Politika-bota--deepmint-vpn-10-27",
 }
