@@ -34,4 +34,5 @@ jobs:
       - name: Run bot (one-shot poll)
         env:
           DEEPMINT_BOT_TOKEN: ${{ secrets.DEEPMINT_BOT_TOKEN }}
+          BOT_POLL_ONESHOT: "1"
         run: python bot.py

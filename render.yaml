@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: deepmint-vpn-bot
+    runtime: python
+    repo: https://github.com/Coderion31/deepmint-vpn-bot
+    plan: free
+    region: frankfurt
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    healthCheckPath: ""
+    envVars:
+      - key: DEEPMINT_BOT_TOKEN
+        sync: false
+      - key: BOT_POLL_ONESHOT
+        value: "0"

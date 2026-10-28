@@ -511,25 +511,45 @@ def main():
         log.info("bot started: %s (@%s)", me.get("first_name"), me.get("username"))
         log.info("channel: %s", CHANNELS)
 
-    # Однократный прогон: GitHub Actions вызывает бота каждую минуту.
-    # Обрабатываем все накопившиеся апдейты (без долгого long-polling) и выходим.
-    offset = USERS.get("_offset")
-    params = {"timeout": 0}
-    if offset is not None:
-        params["offset"] = offset
-    updates = call("getUpdates", **params) or []
-    for update in updates:
-        uid = update.get("update_id", 0)
-        if uid >= (offset or 0):
-            offset = uid + 1
-        try:
-            handle_update(update)
-        except Exception:
-            log.exception("failed to handle update %s", uid)
-    if offset is not None:
-        USERS["_offset"] = offset
-    save_users(USERS)
-    log.info("done: processed %d update(s)", len(updates))
+    # Режим one-shot (BOT_POLL_ONESHOT=1) — для GitHub Actions: один прогон
+    # за минуту. По умолчанию (0/не задано) — бесконечный long-polling для
+    # облачного хостинга (Render).
+    if os.environ.get("BOT_POLL_ONESHOT", "0").strip() == "1":
+        offset = USERS.get("_offset")
+        params = {"timeout": 0}
+        if offset is not None:
+            params["offset"] = offset
+        updates = call("getUpdates", **params) or []
+        for update in updates:
+            uid = update.get("update_id", 0)
+            if uid >= (offset or 0):
+                offset = uid + 1
+            try:
+                handle_update(update)
+            except Exception:
+                log.exception("failed to handle update %s", uid)
+        if offset is not None:
+            USERS["_offset"] = offset
+        save_users(USERS)
+        log.info("done: processed %d update(s)", len(updates))
+        return
+
+    # Бесконечный long-polling (облачный хостинг)
+    offset = None
+    while True:
+        params = {"timeout": 30}
+        if offset is not None:
+            params["offset"] = offset
+        updates = call("getUpdates", **params)
+        if not updates:
+            continue
+        for update in updates:
+            if update.get("update_id", 0) >= (offset or 0):
+                offset = update["update_id"] + 1
+            try:
+                handle_update(update)
+            except Exception:
+                log.exception("failed to handle update %s", update.get("update_id"))
 
 
 if __name__ == "__main__":
