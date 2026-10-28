@@ -528,7 +528,7 @@ def main():
             log.exception("failed to handle update %s", uid)
     if offset is not None:
         USERS["_offset"] = offset
-        save_users(USERS)
+    save_users(USERS)
     log.info("done: processed %d update(s)", len(updates))
 
 
